@@ -1,0 +1,395 @@
+<!--
+  Падающий квадрат
+  © 2026 Орлов Андрей. Все права защищены.
+
+  Автор: Орлов Андрей.
+  Версия: 1.0
+  Дата первой публикации: 27.09.2026
+
+  Копирование, изменение, публикация и распространение
+  без письменного разрешения правообладателя запрещены.
+-->
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Пинг-понг</title>
+<style>
+    /* Убираем отступы и скролл, фон страницы чёрный */
+    html, body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #000000;
+        height: 100%;
+    }
+    canvas {
+        display: block;
+        background: #000000;
+    }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+(function () {
+    "use strict";
+
+    // ==========================================================
+    //  Получаем canvas и контекст рисования
+    // ==========================================================
+    var canvas = document.getElementById("gameCanvas");
+    var ctx = canvas.getContext("2d");
+
+    // Размеры игрового поля (обновляются при изменении окна)
+    var fieldWidth = 0;
+    var fieldHeight = 0;
+
+    // ==========================================================
+    //  Состояние игры
+    // ==========================================================
+    var paddle = {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        speed: 0        // скорость движения ракетки, пикс/сек
+    };
+
+    var ball = {
+        x: 0,
+        y: 0,
+        prevY: 0,       // положение по Y на предыдущем кадре (для защиты от "проваливания")
+        width: 0,       // ширина квадратной области мяча (используется и как диаметр круга)
+        height: 0,      // высота квадратной области мяча (равна width)
+        vx: 0,
+        vy: 0,
+        baseSpeed: 0,   // базовая (начальная) скорость мяча
+        maxSpeed: 0     // предельная скорость мяча
+    };
+
+    var score = 0;
+    var gameOver = false;
+
+    // Состояние нажатых клавиш
+    var keys = {
+        left: false,
+        right: false
+    };
+
+    var lastTimestamp = null;
+
+    // ==========================================================
+    //  Подгонка размеров canvas под размер окна браузера
+    // ==========================================================
+    function resizeCanvas() {
+        fieldWidth = window.innerWidth;
+        fieldHeight = window.innerHeight;
+
+        canvas.width = fieldWidth;
+        canvas.height = fieldHeight;
+
+        // Пересчитываем размеры ракетки относительно размеров поля
+        // (ракетка уменьшена в 3 раза по сравнению с исходным вариантом)
+        paddle.width = Math.max(27, fieldWidth * 0.05);
+        paddle.height = Math.max(10, fieldHeight * 0.015);
+        paddle.y = fieldHeight - paddle.height - 20;
+        paddle.speed = fieldWidth * 0.3; // пикселей в секунду (снижено пропорционально уменьшению ракетки)
+
+        // Следим, чтобы ракетка не оказалась за пределами поля после изменения размера
+        if (paddle.x + paddle.width > fieldWidth) {
+            paddle.x = fieldWidth - paddle.width;
+        }
+        if (paddle.x < 0) {
+            paddle.x = 0;
+        }
+
+        // Пересчитываем размер мяча относительно размеров поля (мяч — круг)
+        ball.width = Math.max(10, fieldWidth * 0.016);
+        ball.height = ball.width; // ширина и высота равны — область мяча квадратная
+
+        // Не даём мячу оказаться за пределами поля после изменения размера
+        if (ball.x + ball.width > fieldWidth) {
+            ball.x = fieldWidth - ball.width;
+        }
+        if (ball.x < 0) {
+            ball.x = 0;
+        }
+    }
+
+    // ==========================================================
+    //  Инициализация / перезапуск игры
+    // ==========================================================
+    function initGame() {
+        resizeCanvas();
+
+        // Ракетка по центру снизу
+        paddle.x = (fieldWidth - paddle.width) / 2;
+
+        // Базовая и максимальная скорость мяча зависят от размера поля
+        ball.baseSpeed = fieldHeight * 0.5;   // пикселей в секунду
+        ball.maxSpeed = ball.baseSpeed * 1.8;
+
+        // Мяч над ракеткой, по центру, летит вниз
+        ball.x = (fieldWidth - ball.width) / 2;
+        ball.y = paddle.y - 150;
+        if (ball.y < 0) {
+            ball.y = 10;
+        }
+        ball.prevY = ball.y;
+
+        ball.vx = 0;
+        ball.vy = ball.baseSpeed;
+
+        score = 0;
+        gameOver = false;
+    }
+
+    function resetGame() {
+        initGame();
+    }
+
+    // ==========================================================
+    //  Обновление состояния игры (движение ракетки и мяча)
+    // ==========================================================
+    function update(dt) {
+        if (gameOver) {
+            return;
+        }
+
+        // --- Движение ракетки ---
+        if (keys.left) {
+            paddle.x -= paddle.speed * dt;
+        }
+        if (keys.right) {
+            paddle.x += paddle.speed * dt;
+        }
+
+        // Ограничение ракетки границами поля
+        if (paddle.x < 0) {
+            paddle.x = 0;
+        }
+        if (paddle.x + paddle.width > fieldWidth) {
+            paddle.x = fieldWidth - paddle.width;
+        }
+
+        // --- Движение мяча ---
+        ball.prevY = ball.y;
+        ball.x += ball.vx * dt;
+        ball.y += ball.vy * dt;
+
+        checkCollisions();
+    }
+
+    // ==========================================================
+    //  Обработка столкновений мяча со стенами и ракеткой
+    // ==========================================================
+    function checkCollisions() {
+        // --- Столкновение с левой стенкой ---
+        if (ball.x <= 0) {
+            ball.x = 0;
+            ball.vx = -ball.vx;
+        }
+
+        // --- Столкновение с правой стенкой ---
+        if (ball.x + ball.width >= fieldWidth) {
+            ball.x = fieldWidth - ball.width;
+            ball.vx = -ball.vx;
+        }
+
+        // --- Столкновение с верхней границей ---
+        if (ball.y <= 0) {
+            ball.y = 0;
+            ball.vy = -ball.vy;
+        }
+
+        // --- Столкновение с ракеткой ---
+        // Мяч должен лететь вниз (vy > 0), чтобы засчитать удар
+        var ballBottomPrev = ball.prevY + ball.height;
+        var ballBottomNow = ball.y + ball.height;
+
+        var horizontallyOverPaddle =
+            (ball.x + ball.width >= paddle.x) &&
+            (ball.x <= paddle.x + paddle.width);
+
+        // Проверяем, пересёк ли мяч верхнюю грань ракетки за этот кадр
+        // (защита от "проваливания" сквозь ракетку при высокой скорости)
+        var crossedPaddleTop =
+            ball.vy > 0 &&
+            ballBottomPrev <= paddle.y &&
+            ballBottomNow >= paddle.y;
+
+        if (crossedPaddleTop && horizontallyOverPaddle) {
+            // Прижимаем мяч точно к верхней грани ракетки
+            ball.y = paddle.y - ball.height;
+
+            // Точка попадания относительно центра ракетки: от -1 (левый край) до 1 (правый край)
+            var paddleCenter = paddle.x + paddle.width / 2;
+            var ballCenter = ball.x + ball.width / 2;
+            var hitOffset = (ballCenter - paddleCenter) / (paddle.width / 2);
+
+            // Ограничиваем диапазон на случай попадания у самого края
+            if (hitOffset < -1) hitOffset = -1;
+            if (hitOffset > 1) hitOffset = 1;
+
+            // Увеличиваем скорость мяча после удачного отражения (с ограничением сверху)
+            var currentSpeed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+            var newSpeed = Math.min(currentSpeed * 1.03, ball.maxSpeed);
+
+            // Максимальный угол отклонения по горизонтали (доля от общей скорости)
+            var maxHorizontalRatio = 0.8;
+
+            var newVx = newSpeed * maxHorizontalRatio * hitOffset;
+            var newVySquared = newSpeed * newSpeed - newVx * newVx;
+            var newVy = -Math.sqrt(Math.max(newVySquared, newSpeed * newSpeed * 0.2));
+
+            ball.vx = newVx;
+            ball.vy = newVy; // отрицательное значение — летит вверх
+
+            score += 1;
+        }
+
+        // --- Мяч пролетел нижнюю границу — проигрыш ---
+        if (ball.y > fieldHeight) {
+            gameOver = true;
+        }
+    }
+
+    // ==========================================================
+    //  Отрисовка игры
+    // ==========================================================
+    function draw() {
+        // Чёрный фон
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, fieldWidth, fieldHeight);
+
+        ctx.fillStyle = "#FFFFFF";
+
+        // Ракетка
+        ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+
+        // Мяч (круг), рисуется по центру своей квадратной области
+        var ballRadius = ball.width / 2;
+        var ballCenterX = ball.x + ballRadius;
+        var ballCenterY = ball.y + ballRadius;
+        ctx.beginPath();
+        ctx.arc(ballCenterX, ballCenterY, ballRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Счёт
+        var fontSize = Math.max(18, Math.floor(fieldHeight * 0.03));
+        ctx.font = fontSize + "px monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText("Очки: " + score, 20, 20);
+
+        // Экран проигрыша
+        if (gameOver) {
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            var titleSize = Math.max(28, Math.floor(fieldHeight * 0.05));
+            var subSize = Math.max(18, Math.floor(fieldHeight * 0.03));
+            var copyrightSize = Math.max(14, Math.floor(fieldHeight * 0.02));
+
+            ctx.font = titleSize + "px monospace";
+            ctx.fillText("Игра окончена", fieldWidth / 2, fieldHeight / 2 - titleSize / 2);
+
+            ctx.font = subSize + "px monospace";
+            ctx.fillText("Нажмите R для перезапуска", fieldWidth / 2, fieldHeight / 2 + titleSize / 2);
+
+            // Строка авторства
+            ctx.font = copyrightSize + "px monospace";
+            ctx.fillText(
+                "© 2026 Орлов Андрей (совместно с Claude AI). Сайт: orlovandrei.space",
+                fieldWidth / 2,
+                fieldHeight / 2 + titleSize / 2 + subSize + 20
+            );
+        }
+    }
+
+    // ==========================================================
+    //  Главный игровой цикл
+    // ==========================================================
+    function gameLoop(timestamp) {
+        if (lastTimestamp === null) {
+            lastTimestamp = timestamp;
+        }
+        var dt = (timestamp - lastTimestamp) / 1000; // время кадра в секундах
+        lastTimestamp = timestamp;
+
+        // Защита от слишком большого dt (например, после сворачивания окна)
+        if (dt > 0.05) {
+            dt = 0.05;
+        }
+
+        update(dt);
+        draw();
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    // ==========================================================
+    //  Обработка клавиатуры
+    // ==========================================================
+    window.addEventListener("keydown", function (e) {
+        switch (e.key) {
+            case "ArrowLeft":
+            case "a":
+            case "A":
+            case "ф":
+            case "Ф":
+                keys.left = true;
+                break;
+            case "ArrowRight":
+            case "d":
+            case "D":
+            case "в":
+            case "В":
+                keys.right = true;
+                break;
+            case "r":
+            case "R":
+            case "к":
+            case "К":
+                if (gameOver) {
+                    resetGame();
+                }
+                break;
+        }
+    });
+
+    window.addEventListener("keyup", function (e) {
+        switch (e.key) {
+            case "ArrowLeft":
+            case "a":
+            case "A":
+            case "ф":
+            case "Ф":
+                keys.left = false;
+                break;
+            case "ArrowRight":
+            case "d":
+            case "D":
+            case "в":
+            case "В":
+                keys.right = false;
+                break;
+        }
+    });
+
+    // ==========================================================
+    //  Обработка изменения размера окна
+    // ==========================================================
+    window.addEventListener("resize", resizeCanvas);
+
+    // ==========================================================
+    //  Запуск игры
+    // ==========================================================
+    initGame();
+    requestAnimationFrame(gameLoop);
+})();
+</script>
+</body>
+</html>
