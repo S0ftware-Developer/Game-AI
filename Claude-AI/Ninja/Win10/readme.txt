@@ -1,5 +1,5 @@
 You can download the finished game in the form of a single EXE file from my cloud:
-https://
+https://drive.google.com/file/d/19x_i6y-Iwehka4-TKEb8TzaMMZ1tuNnh/view?usp=sharing
 
 Installation instructions:
 1) download the zip archive
